@@ -119,7 +119,7 @@ class PhysicsBase(PPPY):
             """
             if 'PHYEX' not in nml:
                 nml['PHYEX'] = {}
-            nml['PHYEX']['CMICRO'] = nml['PHYEX'].get('CMICRO', 'ICE3')
+            nml['PHYEX']['CMICRO'] = nml['PHYEX'].get('CMICRO', 'LIMA')
             nml['PHYEX']['CSCONV'] = nml['PHYEX'].get('CSCONV', 'EDKF')
             nml['PHYEX']['CTURB'] = nml['PHYEX'].get('CTURB', 'TKEL')
             nml['PHYEX']['RAD'] = nml['PHYEX'].get('RAD', 'ECRAD')
@@ -294,7 +294,16 @@ class PhysicsBase(PPPY):
                     'lon': 'lon',
                     'u_geo': 'ug',
                     'v_geo': 'vg',
+                    'nc': 'nc',
+                    'nr': 'nr',
                     'ni': 'ni',
+                    'ns': 'ns',
+                    'ng': 'ng',
+                    'nh': 'nh',
+                    'nccnf': 'nccnf',
+                    'nccna': 'nccna',
+                    'nifnf': 'nifnf',
+                    'nifna': 'nifna',
                   }
 
         with netCDF4.Dataset(self.inputfile, 'r') as nc:
@@ -320,9 +329,13 @@ class PhysicsBase(PPPY):
             for var in self.prognostic_variables:
                 if var in ('qc', 'qi', 'qr', 'qs', 'qg', 'qh',
                            'rc', 'ri', 'rr', 'rs', 'rg', 'rh',
+                           'nc', 'nr', 'ni', 'ns', 'ng', 'nh',
+                           'nccnf', 'nccna', 'nifnf', 'nifna',
                            'w') and nc_names[var] not in nc.variables:
                     init_state[var] = numpy.zeros(output_coord.shape)
                     logging.warning('%s not found in the netCDF driver!', nc_names[var])
+                    if var == 'nccnf': init_state[var][:] = 300.E6
+                    if var == 'nifnf': init_state[var][:] = 10.E3
                 else:
                     interp = RegularGridInterpolator((input_coord, ), nc[nc_names[var]][0, :],
                                                      bounds_error=False, fill_value=None)
@@ -553,6 +566,8 @@ class PhysicsArome(PhysicsBase):
             krr = 6
         elif self.full_phyex_namel['PHYEX']['CMICRO'] == 'ICE4':
             krr = 7
+        elif self.full_phyex_namel['PHYEX']['CMICRO'] == 'LIMA':
+            krr = 7
         else:
             raise Phyex1DError('Unknowm microphysics scheme')
         ksv = 0
@@ -628,11 +643,87 @@ class PhysicsArome(PhysicsBase):
         if 'T' in self.prognostic_variables:
             dtemperature = numpy.zeros((nkt, ))
 
+        nc = state['nc']
+        nr = state['nr']
+        ni = state['ni']
+        ns = state['ns']
+        ng = state['ng']
+        nh = state['nh']
+        nccnf = state['nccnf']
+        nccna = state['nccna']
+        nifnf = state['nifnf']
+        nifna = state['nifna']
+
+        ncs = state['nc'] / timestep
+        nrs = state['nr'] / timestep
+        nis = state['ni'] / timestep
+        nss = state['ns'] / timestep
+        ngs = state['ng'] / timestep
+        nhs = state['nh'] / timestep
+        nccnfs = state['nccnf'] / timestep
+        nccnas = state['nccna'] / timestep
+        nifnfs = state['nifnf'] / timestep
+        nifnas = state['nifna'] / timestep
+
+        
         # Preparation: misc fields
         sigqsat = numpy.ones((nijt, )) * self.full_phyex_namel['NAM_NEBn']['VSIGQSAT']
         mfconv = numpy.zeros((nkt, ))
-        sv = numpy.zeros((ksv, nkt))
-        svs = sv / timestep
+
+        nlima = 0                
+        nlima += self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_C']>=2 
+        nlima += self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_R']>=2 
+        nlima += self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_I']>=2 
+        nlima += self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_S']>=2 
+        nlima += self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_G']>=2 
+        nlima += self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_H']>=2
+        nlima += 2*self.full_phyex_namel['NAM_PARAM_LIMA']['NMOD_CCN']
+        nlima += 2*self.full_phyex_namel['NAM_PARAM_LIMA']['NMOD_IFN']
+        psvt=numpy.zeros((nlima,rv.shape[0]))
+        psvs=numpy.zeros((nlima,rv.shape[0]))
+        x = numpy.newaxis
+        i=0
+        if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_C']>=2:
+            psvt[i,:]=nc[:]
+            psvs[i,:]=nc[:] / timestep
+            i+=1
+        if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_R']>=2:
+            psvt[i,:]=nr[:]
+            psvs[i,:]=nr[:] / timestep
+            i+=1
+        if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOD_CCN']>=1:
+            psvt[i,:]=nccnf[:]
+            psvs[i,:]=nccnf[:] / timestep
+            i+=1
+            psvt[i,:]=nccna[:]
+            psvs[i,:]=nccna[:] / timestep
+            i+=1
+        if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_I']>=2:
+            psvt[i,:]=ni[:]
+            psvs[i,:]=ni[:] / timestep
+            i+=1
+        if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_S']>=2:
+            psvt[i,:]=ns[:]
+            psvs[i,:]=ns[:] / timestep
+            i+=1
+        if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_G']>=2:
+            psvt[i,:]=ng[:]
+            psvs[i,:]=ng[:] / timestep
+            i+=1
+        if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_H']>=2:
+            psvt[i,:]=nh[:]
+            psvs[i,:]=nh[:] / timestep
+            i+=1
+        if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOD_IFN']>=1:
+            psvt[i,:]=nifnf[:]
+            psvs[i,:]=nifnf[:] / timestep
+            i+=1
+            psvt[i,:]=nifna[:]
+            psvs[i,:]=nifna[:] / timestep
+            i+=1
+
+        #sv = numpy.zeros((ksv, nkt))
+        #svs = sv / timestep
 
         ##################################################################
         ##################################################################
@@ -670,6 +761,169 @@ class PhysicsArome(PhysicsBase):
             (_, _, _, _, _, rvs, rcs, thetas, src, state['CF'], ris, _, _, _, _,
             hlc_hrc, hlc_hcf, hli_hri, hli_hcf) = result
             theta = thetas * timestep
+            temperature = theta * exner
+            rv = rvs * timestep
+            rc = rcs * timestep
+            ri = ris * timestep
+
+            if 'qv' in self.prognostic_variables:
+                qv = rv * qdm
+                qc = rc * qdm
+                qr = rr * qdm
+                qi = ri * qdm
+                qs = rs * qdm
+                qg = rg * qdm
+                qh = rh * qdm
+                gas_constant = self.cst.Rd + state['qv'] * (self.cst.Rv - self.cst.Rd)
+                for var in ('qc', 'qr', 'qi', 'qs', 'qg', 'qh'):
+                    if var in self.prognostic_variables:
+                        gas_constant += - state[var] * self.cst.Rd
+                rho = pressure / (gas_constant * temperature)
+                rhodref = rho * qdm
+                dqv += (rvs - rvsin) * qdm
+                dqc += (rcs - rcsin) * qdm
+                dqi += (ris - risin) * qdm
+            else:
+                div = 1. + state['rv']
+                for var in ('rc', 'rr', 'ri', 'rs', 'rg', 'rh'):
+                    if var in self.prognostic_variables:
+                        div += state[var]
+                gas_constant = (self.cst.Rd + state['rv'] * self.cst.Rv) / div
+                rho = pressure / (gas_constant * temperature)
+                rhodref = pressure / ((self.cst.Rd + rv * self.cst.Rv) * theta * exner)
+
+            if 'T' in self.prognostic_variables:
+                dtemperature += (thetas - thsin) * exner
+
+            # Update state to be able to recompute pressure and altitude
+            if 'qv' in self.prognostic_variables:
+                state['qv'] = state0['qv'] + dqv * timestep
+                state['qc'] = state0['qc'] + dqc * timestep
+                state['qr'] = state0['qr'] + dqr * timestep
+                state['qi'] = state0['qi'] + dqi * timestep
+                state['qs'] = state0['qs'] + dqs * timestep
+                state['qg'] = state0['qg'] + dqg * timestep
+                state['qh'] = state0['qh'] + dqh * timestep
+            else:
+                state['rv'] = rvs * timestep
+                state['rc'] = rcs * timestep
+                state['rr'] = rrs * timestep
+                state['ri'] = ris * timestep
+                state['rs'] = rss * timestep
+                state['rg'] = rgs * timestep
+                state['rh'] = rhs * timestep
+            if 'T' in self.prognostic_variables:
+                state['T'] = state0['T'] + dtemperature * timestep
+            else:
+                state['Theta'] = thetas * timestep
+            pressure = self.grid.get_pressure('MASS', state, self.prognostic_variables)
+            z_mass = self.grid.get_altitude('MASS', state, self.prognostic_variables)
+            z_flux = self.grid.get_altitude('FLUX', state, self.prognostic_variables)
+            if self.grid.ascending:
+                dzz = numpy.diff(z_flux)
+                if dzz[-1] == numpy.inf:
+                    dzz[-1] = dzz[-2]
+            else:
+                dzz = -numpy.diff(z_flux)
+                if dzz[0] == numpy.inf:
+                    dzz[0] = dzz[1]
+                    
+        elif self.full_phyex_namel['PHYEX']['CMICRO'] == 'LIMA':
+            if 'qv' in self.prognostic_variables:
+                rvsin = rvs.copy()
+                rcsin = rcs.copy()
+                risin = ris.copy()
+            if 'T' in self.prognostic_variables:
+                thsin = thetas.copy()
+
+            x = numpy.newaxis
+
+            if krr == 7:
+                prm = numpy.array([rv[:, x], rc[:, x], rr[:, x], ri[:, x], rs[:, x], rg[:, x], rh[:, x]])
+                prs = numpy.array([rvs[:, x], rcs[:, x], rrs[:, x], ris[:, x], rss[:, x], rgs[:, x], rhs[:, x]])
+            else :
+                prm = numpy.array([rv[:, x], rc[:, x], rr[:, x], ri[:, x], rs[:, x], rg[:, x]])
+                prs = numpy.array([rvs[:, x], rcs[:, x], rrs[:, x], ris[:, x], rss[:, x], rgs[:, x]])
+
+
+            dummy = ris.copy() * 0.
+
+            pw_nu = state['w'] + numpy.sqrt(state['tke'])/3.
+            pdthrad = ris.copy() * 0.
+            paero=psvt.copy() * 0.
+            psolorg=numpy.zeros((10,rv.shape[0],1))
+            pmi=numpy.zeros((1,rv.shape[0],1))
+
+            result = self._pyphyex.PYLIMA_ADJUST_SPLIT(
+                                 nlima, nijt, nkt, 1 if self.grid.ascending else -1, 0, 0.,
+                                 krr, self.full_phyex_namel['NAM_NEBn']['CCONDENS'],
+                                 self.full_phyex_namel['NAM_NEBn']['CLAMBDA3'], 1, 0, 0, False, False, False,
+                                 self.full_phyex_namel['NAM_NEBn']['LSUBG_COND'],
+                                 self.full_phyex_namel['NAM_NEBn']['LSIGMAS'], timestep, sigqsat, rhodref[:, x],
+                                 rhodj[:, x], exner[:, x], state['sigs'][:, x], False, mfconv[:, x], 
+                                 pressure[:, x], z_mass[:, x], True, pdthrad[:, x],
+                                 pw_nu[:, x], prm, prs, psvt[:, :, x], psvs[:, :, x],
+                                 '', paero[:, :, x], psolorg, pmi, thetas[:, x], True,
+                                 state['rc_MF'][:, x], state['ri_MF'][:, x], state['CF_MF'][:, x],
+                                 MISSING, state['WEIGHT_MF_CLOUD'][:, x],
+                                 PHLC_HRC_MF=state['HLC_HRC_MF'][:, x],
+                                 PHLC_HCF_MF=state['HLC_HCF_MF'][:, x],
+                                 PHLI_HRI_MF=state['HLI_HRI_MF'][:, x],
+                                 PHLI_HCF_MF=state['HLI_HCF_MF'][:, x])
+            
+            #result = [array[:, 0] for array in result]
+            (prs, psvs, _, thetas, src, state['CF'], _,
+            hlc_hrc, hlc_hcf, hli_hri, hli_hcf) = result
+
+            state['CF'] = state['CF'][:, 0]
+            hlc_hrc = hlc_hrc[:, 0]
+            hlc_hcf = hlc_hcf[:, 0]
+            hli_hri = hli_hri[:, 0]
+            hli_hcf = hli_hcf[:, 0]
+            thetas = thetas[:, 0]
+            src = src[:, 0]
+
+            rvs = prs[0,:,0]
+            rcs = prs[1,:,0]
+            rrs = prs[2,:,0]
+            ris = prs[3,:,0]
+            rss = prs[4,:,0]
+            rgs = prs[5,:,0]
+            if krr == 7:
+                rhs = prs[6,:,0] * timestep
+
+            i=0
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_C']>=2:
+                ncs = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_R']>=2:
+                nrs = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOD_CCN']>=1:
+                nccnfs = psvs[i,:,0]
+                i+=1
+                nccnas = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_I']>=2:
+                nis = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_S']>=2:
+                nss = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_G']>=2:
+                ngs = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_H']>=2:
+                nhs = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOD_IFN']>=1:
+                nifnfs = psvs[i,:,0]
+                i+=1
+                nifnas = psvs[i,:,0]
+                i+=1
+
+            psvs = psvs[:,:,0]
+                
             temperature = theta * exner
             rv = rvs * timestep
             rc = rcs * timestep
@@ -937,7 +1191,7 @@ class PhysicsArome(PhysicsBase):
             sfu, sfv = ustar2fluxes(state['ustar'], state['u'][klevgrd], state['v'][klevgrd])
         else:
             raise Phyex1DError('Wrong surface_forcing_wind option')
-        sfsv = numpy.zeros((ksv, ))
+        sfsv = numpy.zeros((nlima, ))
 
         # The turbulence scheme waits for w'r' and w'th'
         # for the water flux, we want w'r' (division by rhod) and not w'q' (division by rho)
@@ -985,15 +1239,15 @@ class PhysicsArome(PhysicsBase):
             x = numpy.newaxis
             result = self._pyphyex.PYSHALLOW_MF(
                          nijt, nkt, 1 if self.grid.ascending else -1,
-                         0, krr, 2, 3, 0, False, 0, 0,
+                         0, krr, 2, 3, nlima, False, 0, 0,
                          timestep, dzz[:, x], z_flux_trunc[:, x], rhodj[:, x],
                          rhodref[:, x], pressure[:, x], exner[:, x],
                          numpy.ones((nijt, )) * sfth, numpy.ones((nijt, )) * sfrv, theta[:, x],
                          rm[:krr, :, x], state['u'][:, x], state['v'][:, x], state['tke'][:, x],
-                         sv[:, :, x], pthl_up[:, x], prt_up[:, x], prv_up[:, x], prc_up[:, x],
+                         psvt[:, :, x], pthl_up[:, x], prt_up[:, x], prv_up[:, x], prc_up[:, x],
                          pri_up[:, x], pu_up[:, x], pv_up[:, x], ptke_up[:, x], pthv_up[:, x],
                          pw_up[:, x], pfrac_up[:, x], pemf[:, x],
-                         self.dx, self.dy, PRSVS=svs[:, :, x], KBUDGETS=0)
+                         self.dx, self.dy, PRSVS=psvs[:, :, x], KBUDGETS=0)
             result = [array[..., 0] for array in result]
             (du_mf, dv_mf, dtke_mf, dthl_mf, drt_mf, dsv_mf, sigs_mf,
              state['rc_MF'], state['ri_MF'], state['CF_MF'], state['HLC_HRC_MF'],
@@ -1003,7 +1257,7 @@ class PhysicsArome(PhysicsBase):
             us += du_mf
             vs += dv_mf
             tkes += dtke_mf
-            svs += dsv_mf
+            psvs += dsv_mf
             if 'Theta' in self.prognostic_variables:
                 thetas += dthl_mf
             else:
@@ -1084,7 +1338,7 @@ class PhysicsArome(PhysicsBase):
             thetas = thetas * rhodj
             tkes = tkes * rhodj
             prs = prs * rhodj[numpy.newaxis, :]
-            svs = svs * rhodj
+            psvs = psvs * rhodj
             if self.grid.ascending:
                 z_flux_trunc = z_flux[:-1]
             else:
@@ -1093,7 +1347,7 @@ class PhysicsArome(PhysicsBase):
             result = self._pyphyex.PYTURB(
                     nijt, nkt + 2 * nvext_turb, 1 if self.grid.ascending else -1, nvext_turb,
                     krr, krrl, krri, hlbcx, hlbcy, kgradientsleo, kgradientsgog,
-                    khalo, ksplit, ocloudmodiflm, ksv, ksv_lgbeg, ksv_lgend,
+                    khalo, ksplit, ocloudmodiflm, nlima, ksv_lgbeg, ksv_lgend,
                     ksv_lima_nr, ksv_lima_ns, ksv_lima_ng, ksv_lima_nh,
                     o2d, onomixlg, oflat, ocouples, oblowsnow, oibm, oflyer,
                     ocompute_src, rsnow, oocean, odeepoc, odiag_in_run,
@@ -1104,16 +1358,16 @@ class PhysicsArome(PhysicsBase):
                     x(sfth), x(sfrv), sfsv[:, numpy.newaxis], x(sfu), x(sfv),
                     x(psea_ucu), x(psea_vcu),
                     x(pressure), x(state['u']), x(state['v']), x(state['w']),
-                    x(state['tke']), x(sv), x(src), x(lengthm), x(lengthh), x(mfmoist),
+                    x(state['tke']), x(psvt), x(src), x(lengthm), x(lengthh), x(mfmoist),
                     x(bl_depth), x(sbl_depth), x(cei), cei_min, cei_max, coef_ampl_sat,
                     x(theta), x(prm[:krr, ...]), x(us), x(vs), x(ws), x(thetas),
-                    x(prs[:krr, ...]), x(svs), x(tkes),
+                    x(prs[:krr, ...]), x(psvs), x(tkes),
                     x(flxzthvmf), x(flxzumf), x(flxzvmf),
                     kbudgets, missingOUT=['PEDR', 'PLEM', 'PDPMF', 'PTPMF',
                     'PTR', 'PDISS', 'PIBM_XMUT', 'PCURRENT_TKE_DISS'])
 
             result = [x(array, reverse=True) for array in result]
-            (_, _, _, _, us, vs, ws, thetas, prs, svs, tkes, sigs_turb, _,
+            (_, _, _, _, us, vs, ws, thetas, prs, psvs, tkes, sigs_turb, _,
              _, _, _, _, _, _, _, _, dthetal_turb, drt_turb, _) = result
 
             us = us / rhodj
@@ -1124,7 +1378,7 @@ class PhysicsArome(PhysicsBase):
             dthetal_turb = dthetal_turb / rhodj
             drt_turb = drt_turb / rhodj
             prs = prs / rhodj[numpy.newaxis, :]
-            svs = svs / rhodj
+            psvs = psvs / rhodj
 
             if 'T' in self.prognostic_variables:
                 dtemperature += dthetal_turb * exner
@@ -1221,6 +1475,128 @@ class PhysicsArome(PhysicsBase):
             if 'T' in self.prognostic_variables:
                 dtemperature += (thetas - thsin) * exner
 
+        elif self.full_phyex_namel['PHYEX']['CMICRO'] == 'LIMA':
+            if 'qv' in self.prognostic_variables:
+                rvsin = rvs.copy()
+                rcsin = rcs.copy()
+                rrsin = rrs.copy()
+                risin = ris.copy()
+                rssin = rss.copy()
+                rgsin = rgs.copy()
+                rhsin = rhs.copy()
+            if 'T' in self.prognostic_variables:
+                thsin = thetas.copy()
+
+            x = numpy.newaxis
+
+            if krr == 7:
+                prm = numpy.array([rv[:, x], rc[:, x], rr[:, x], ri[:, x], rs[:, x], rg[:, x], rh[:, x]])
+                prs = numpy.array([rvs[:, x], rcs[:, x], rrs[:, x], ris[:, x], rss[:, x], rgs[:, x], rhs[:, x]])
+            else :
+                prm = numpy.array([rv[:, x], rc[:, x], rr[:, x], ri[:, x], rs[:, x], rg[:, x]])
+                prs = numpy.array([rvs[:, x], rcs[:, x], rrs[:, x], ris[:, x], rss[:, x], rgs[:, x]])
+
+            dummy = ris.copy() * 0.
+
+            pw_nu = state['w'] + numpy.sqrt(state['tke'])/3.
+            pdthrad = ris.copy() * 0.
+            paero=psvt.copy() * 0.
+            psolorg=numpy.zeros((10,rv.shape[0],1))
+            pmi=numpy.zeros((1,rv.shape[0],1))
+
+            result = self._pyphyex.PYLIMA(
+                                 nlima, nijt, nkt, 1 if self.grid.ascending else -1, 0, '', 0., krr,
+                                 timestep, False, rhodref[:, x], exner[:, x], dzz[:, x], MISSING, rhodj[:, x],
+                                 pressure[:, x], 1, 0, 0, False, False, False, True, pdthrad[:, x], theta[:, x],
+                                 prm, psvt[:, :, x], state['ni'][:, x], pw_nu[:, x], paero[:, :, x], psolorg, pmi,
+                                 thetas[:, x], prs, psvs[:, :, x], state['CF'][:, x], dummy[:, x], dummy[:, x], 
+                                 hlc_hcf[:, x], hlc_hrc[:, x], hli_hcf[:, x], hli_hri[:, x],
+                                 MISSING, MISSING, MISSING, MISSING)
+                                 
+            (state['ni'], _, thetas, prs, psvs, _, _, _, _, _, _, _, _,
+             state['CF'], _, _, hlc_hcf, hlc_hrc, hli_hcf, hli_hri, _, ) = result
+            
+            state['ni'] = state['ni'][:, 0]
+            state['CF'] = state['CF'][:, 0]
+            hlc_hrc = hlc_hrc[:, 0]
+            hlc_hcf = hlc_hcf[:, 0]
+            hli_hri = hli_hri[:, 0]
+            hli_hcf = hli_hcf[:, 0]
+            thetas = thetas[:, 0]
+
+            rvs = prs[0,:,0]
+            rcs = prs[1,:,0]
+            rrs = prs[2,:,0]
+            ris = prs[3,:,0]
+            rss = prs[4,:,0]
+            rgs = prs[5,:,0]
+            if krr == 7:
+                rhs = prs[6,:,0] * timestep
+
+            i=0
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_C']>=2:
+                ncs = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_R']>=2:
+                nrs = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOD_CCN']>=1:
+                nccnfs = psvs[i,:,0]
+                i+=1
+                nccnas = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_I']>=2:
+                nis = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_S']>=2:
+                nss = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_G']>=2:
+                ngs = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOM_H']>=2:
+                nhs = psvs[i,:,0]
+                i+=1
+            if self.full_phyex_namel['NAM_PARAM_LIMA']['NMOD_IFN']>=1:
+                nifnfs = psvs[i,:,0]
+                i+=1
+                nifnas = psvs[i,:,0]
+                i+=1
+
+                
+            if 'qv' in self.prognostic_variables:
+                qv = rvs * timestep * qdm
+                qc = rcs * timestep * qdm
+                qr = rrs * timestep * qdm
+                qi = ris * timestep * qdm
+                qs = rss * timestep * qdm
+                qg = rgs * timestep * qdm
+                qh = rhs * timestep * qdm
+                gas_constant = self.cst.Rd + state['qv'] * (self.cst.Rv - self.cst.Rd)
+                for var in ('qc', 'qr', 'qi', 'qs', 'qg', 'qh'):
+                    if var in self.prognostic_variables:
+                        gas_constant += - state[var] * self.cst.Rd
+                rho = pressure / (gas_constant * temperature)
+                rhodref = rho * qdm
+                dqv += (prs[0,:,0] - rvsin) * qdm
+                dqc += (prs[1,:,0] - rcsin) * qdm
+                dqr += (prs[2,:,0] - rrsin) * qdm
+                dqi += (prs[3,:,0] - risin) * qdm
+                dqs += (prs[4,:,0] - rssin) * qdm
+                dqg += (prs[5,:,0] - rgsin) * qdm
+                dqh += (prs[6,:,0] - rhsin) * qdm
+            else:
+                div = 1. + state['rv']
+                for var in ('rc', 'rr', 'ri', 'rs', 'rg', 'rh'):
+                    if var in self.prognostic_variables:
+                        div += state[var]
+                gas_constant = (self.cst.Rd + state['rv'] * self.cst.Rv) / div
+                rho = pressure / (gas_constant * temperature)
+                rhodref = pressure / ((self.cst.Rd + rv * self.cst.Rv) * theta * exner)
+
+            if 'T' in self.prognostic_variables:
+                dtemperature += (thetas - thsin) * exner
+
         else:
             raise Phyex1DError('Wrong CMICRO scheme choice for microphysics')
 
@@ -1252,6 +1628,16 @@ class PhysicsArome(PhysicsBase):
         state['u'] = us * timestep
         state['v'] = vs * timestep
         state['tke'] = tkes * timestep
+        state['nc'] = ncs * timestep
+        state['nr'] = nrs * timestep
+        state['ni'] = nis * timestep
+        state['ns'] = nss * timestep
+        state['ng'] = ngs * timestep
+        state['nh'] = nhs * timestep
+        state['nccnf'] = nccnfs * timestep
+        state['nccna'] = nccnas * timestep
+        state['nifnf'] = nifnfs * timestep
+        state['nifna'] = nifnas * timestep
         return state
 
 
@@ -1301,7 +1687,8 @@ class PhysicsAromeThetaR(PhysicsArome):
         :param attrs: dictionnary holding caes attributes to override
         """
         super().__init__(dt, method, name, tag, inputfile, grid,
-                         ['Theta', 'rv', 'rc', 'ri', 'rr', 'rs', 'rg', 'rh', 'u', 'v', 'w', 'tke'],
+                         ['Theta', 'rv', 'rc', 'ri', 'rr', 'rs', 'rg', 'rh', 'u', 'v', 'w', 'tke', 'nc',
+                          'nr', 'ni', 'ns', 'ng', 'nh', 'nccnf', 'nccna', 'nifnf', 'nifna'],
                          pyphyex, pyecrad, namel, dx, dy, attrs)
 
 class PhysicsForcingTQ(PhysicsBase):
@@ -1350,5 +1737,6 @@ class PhysicsForcingThetaR(PhysicsBase):
         :param attrs: dictionnary holding caes attributes to override
         """
         super().__init__(dt, method, name, tag, inputfile, grid,
-                         ['Theta', 'rv', 'rc', 'ri', 'rr', 'rs', 'rg', 'rh', 'u', 'v', 'w', 'tke'],
+                         ['Theta', 'rv', 'rc', 'ri', 'rr', 'rs', 'rg', 'rh', 'u', 'v', 'w', 'tke', 'nc',
+                          'nr', 'ni', 'ns', 'ng', 'nh', 'nccnf', 'nccna', 'nifnf', 'nifna'],
                          pyphyex, pyecrad, namel, dx, dy, attrs)
